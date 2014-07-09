@@ -18,16 +18,16 @@ package com.nostra13.universalimageloader.core;
 import android.view.View;
 import com.nostra13.universalimageloader.core.assist.FailReason;
 import com.nostra13.universalimageloader.core.assist.FlushedInputStream;
-import com.nostra13.universalimageloader.core.listener.ImageLoadingListener;
 import com.nostra13.universalimageloader.core.imageaware.ImageAware;
+import com.nostra13.universalimageloader.core.listener.ImageLoadingListener;
 
+import java.io.File;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -43,7 +43,7 @@ class ImageLoaderEngine {
 
 	private Executor taskExecutor;
 	private Executor taskExecutorForCachedImages;
-	private ExecutorService taskDistributor;
+	private Executor taskDistributor;
 
 	private final Map<Integer, String> cacheKeysForImageAwares = Collections
 			.synchronizedMap(new HashMap<Integer, String>());
@@ -61,7 +61,7 @@ class ImageLoaderEngine {
 		taskExecutor = configuration.taskExecutor;
 		taskExecutorForCachedImages = configuration.taskExecutorForCachedImages;
 
-		taskDistributor = Executors.newCachedThreadPool();
+		taskDistributor = DefaultConfigurationFactory.createTaskDistributor();
 	}
 
 	/** Submits task to execution pool */
@@ -69,9 +69,10 @@ class ImageLoaderEngine {
 		taskDistributor.execute(new Runnable() {
 			@Override
 			public void run() {
-				boolean isImageCachedOnDisc = configuration.discCache.get(task.getLoadingUri()).exists();
+				File image = configuration.diskCache.get(task.getLoadingUri());
+				boolean isImageCachedOnDisk = image != null && image.exists();
 				initExecutorsIfNeed();
-				if (isImageCachedOnDisc) {
+				if (isImageCachedOnDisk) {
 					taskExecutorForCachedImages.execute(task);
 				} else {
 					taskExecutor.execute(task);
@@ -99,7 +100,7 @@ class ImageLoaderEngine {
 	private Executor createTaskExecutor() {
 		return DefaultConfigurationFactory
 				.createExecutor(configuration.threadPoolSize, configuration.threadPriority,
-								configuration.tasksProcessingType);
+				configuration.tasksProcessingType);
 	}
 
 	/**
@@ -166,7 +167,13 @@ class ImageLoaderEngine {
 		}
 	}
 
-	/** Stops engine, cancels all running and scheduled display image tasks. Clears internal data. */
+	/**
+	 * Stops engine, cancels all running and scheduled display image tasks. Clears internal data.
+	 * <br />
+	 * <b>NOTE:</b> This method doesn't shutdown
+	 * {@linkplain com.nostra13.universalimageloader.core.ImageLoaderConfiguration.Builder#taskExecutor(java.util.concurrent.Executor)
+	 * custom task executors} if you set them.
+	 */
 	void stop() {
 		if (!configuration.customExecutor) {
 			((ExecutorService) taskExecutor).shutdownNow();
@@ -177,6 +184,10 @@ class ImageLoaderEngine {
 
 		cacheKeysForImageAwares.clear();
 		uriLocks.clear();
+	}
+
+	void fireCallback(Runnable r) {
+		taskDistributor.execute(r);
 	}
 
 	ReentrantLock getLockForUri(String uri) {

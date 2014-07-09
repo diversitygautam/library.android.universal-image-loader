@@ -19,8 +19,8 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.CompressFormat;
-import android.graphics.drawable.BitmapDrawable;
 import android.net.Uri;
+import android.provider.MediaStore;
 import com.nostra13.universalimageloader.core.DisplayImageOptions;
 import com.nostra13.universalimageloader.core.assist.ContentLengthInputStream;
 import com.nostra13.universalimageloader.utils.IoUtils;
@@ -42,7 +42,6 @@ import java.net.URLConnection;
  * {@link URLConnection} is used to retrieve image stream from network.
  *
  * @author Sergey Tarasevich (nostra13[at]gmail[dot]com)
- * @see HttpClientImageDownloader
  * @since 1.8.0
  */
 public class BaseImageDownloader implements ImageDownloader {
@@ -58,8 +57,9 @@ public class BaseImageDownloader implements ImageDownloader {
 
 	protected static final int MAX_REDIRECT_COUNT = 5;
 
-	private static final String ERROR_UNSUPPORTED_SCHEME = "UIL doesn't support scheme(protocol) by default [%s]. "
-			+ "You should implement this support yourself (BaseImageDownloader.getStreamFromOtherSource(...))";
+	protected static final String CONTENT_CONTACTS_URI_PREFIX = "content://com.android.contacts/";
+
+	private static final String ERROR_UNSUPPORTED_SCHEME = "UIL doesn't support scheme(protocol) by default [%s]. " + "You should implement this support yourself (BaseImageDownloader.getStreamFromOtherSource(...))";
 
 	protected final Context context;
 	protected final int connectTimeout;
@@ -157,7 +157,7 @@ public class BaseImageDownloader implements ImageDownloader {
 	protected InputStream getStreamFromFile(String imageUri, Object extra) throws IOException {
 		String filePath = Scheme.FILE.crop(imageUri);
 		return new ContentLengthInputStream(new BufferedInputStream(new FileInputStream(filePath), BUFFER_SIZE),
-				new File(filePath).length());
+				(int) new File(filePath).length());
 	}
 
 	/**
@@ -171,7 +171,19 @@ public class BaseImageDownloader implements ImageDownloader {
 	 */
 	protected InputStream getStreamFromContent(String imageUri, Object extra) throws FileNotFoundException {
 		ContentResolver res = context.getContentResolver();
+
 		Uri uri = Uri.parse(imageUri);
+		if (isVideoUri(uri)) {
+			Long origId = Long.valueOf(uri.getLastPathSegment());
+			Bitmap bitmap = MediaStore.Video.Thumbnails
+					.getThumbnail(res, origId, MediaStore.Images.Thumbnails.MINI_KIND, null);
+			if (bitmap != null) {
+				ByteArrayOutputStream bos = new ByteArrayOutputStream();
+				bitmap.compress(CompressFormat.PNG, 0, bos);
+				return new ByteArrayInputStream(bos.toByteArray());
+			}
+		}
+
 		return res.openInputStream(uri);
 	}
 
@@ -200,12 +212,7 @@ public class BaseImageDownloader implements ImageDownloader {
 	protected InputStream getStreamFromDrawable(String imageUri, Object extra) {
 		String drawableIdString = Scheme.DRAWABLE.crop(imageUri);
 		int drawableId = Integer.parseInt(drawableIdString);
-		BitmapDrawable drawable = (BitmapDrawable) context.getResources().getDrawable(drawableId);
-		Bitmap bitmap = drawable.getBitmap();
-
-		ByteArrayOutputStream os = new ByteArrayOutputStream();
-		bitmap.compress(CompressFormat.PNG, 0, os);
-		return new ByteArrayInputStream(os.toByteArray());
+		return context.getResources().openRawResource(drawableId);
 	}
 
 	/**
@@ -223,5 +230,15 @@ public class BaseImageDownloader implements ImageDownloader {
 	 */
 	protected InputStream getStreamFromOtherSource(String imageUri, Object extra) throws IOException {
 		throw new UnsupportedOperationException(String.format(ERROR_UNSUPPORTED_SCHEME, imageUri));
+	}
+
+	private boolean isVideoUri(Uri uri) {
+		String mimeType = context.getContentResolver().getType(uri);
+
+		if (mimeType == null) {
+			return false;
+		}
+
+		return mimeType.startsWith("video/");
 	}
 }
